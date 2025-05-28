@@ -254,235 +254,311 @@ class EIsettingWidget(QtWidgets.QDialog):
 
 
 #ここから計算パート！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！
-class TR797_modified:
-    # 初期化
-    """TR-797 最適循環分布 + 構造弾性計算ラッパ"""
+class TR797_modified():
     def __init__(self):
+        #リスト変数の定義
         self.dy = 0.05
-        self.y_div = [];  self.z_div = [];  self.y_section = []; self.Ndiv_sec = []
-        self.y = [];      self.z = [];      self.phi = []
+
+        self.y_div = []
+        self.z_div = []
+        self.y_section = []
+        self.Ndiv_sec = []
+        self.y = []
+        self.z = []
+        self.phi = []
+
         self.dS = []
-        self.sigma = [];  self.spar_weight = 0; self.sigma_wire = []
+
+        self.sigma = []
+        self.spar_weight = 0
+        #sigma_wireは線密度＋ワイヤー引っ張りを考慮した下向きの[N/m]
+        self.sigma_wire = []
+
+        #多角形化行列
         self.polize_mat = [[]]
+
+        #誘導速度行列
         self.Q_ij = [[]]
+
+        #せん断力を積分によって求める行列
         self.sh_mat = [[]]
+
+        #モーメントを積分によって求める行列
         self.mo_mat = [[]]
-        self.EI = [];     self.vd_mat = []; self.v_mat = []
-        self.B = [[]];    self.C = [[]];    self.A = [[]]
-        self.gamma = [];  self.ind_vel = []
-        self.run = 1 
-        self.comp = 1  
 
-    # パラメータ準備
-    def prepare(self, settingwidget, eisettingwidget):
-        self.dy         = float(settingwidget.lift_maxbending_input.dyinput.text()) / 1000
-        self.b          = round(float(settingwidget.tablewidget.item(0,
-                      settingwidget.tablewidget.columnCount() - 1).text()) * 2 / 1000, 4)
-        self.n_section  = settingwidget.tablewidget.columnCount() - 1
+        #たわみ角を積分によって求める行列
+        #剛性値ベクトル
+        self.EI = []
+        self.vd_mat = []
+
+        #たわみを求める行列
+        self.v_mat = []
+
+        #構造制約行列B
+        self.B = [[]]
+
+        #揚力制約行列C
+        self.C = [[]]
+
+        #最適化行列A
+        self.A = [[]]
+
+        #最適循環値
+        self.gamma = []
+        #誘導速度見積もり
+        self.ind_vel = []
+
+        #計算中スイッチ
+        self.run = 1
+        #出力可能な値があるか
+        self.comp = 1
+
+    def prepare(self,settingwidget,eisettingwidget):
+        self.dy = float(settingwidget.lift_maxbending_input.dyinput.text()) / 1000
+        self.b = round(float(settingwidget.tablewidget.item(0,settingwidget.tablewidget.columnCount() - 1).text()) * 2 / 1000,4)
+        self.n_section = int(settingwidget.tablewidget.columnCount()) - 1
         self.max_tawami = float(settingwidget.lift_maxbending_input.bendinginput.text()) / 1000
-        self.y_wire     = float(settingwidget.lift_maxbending_input.wireposinput.text())  / 1000
-        self.rho        = 1.154
-        self.U          = float(settingwidget.lift_maxbending_input.velocityinput.text())
-        self.M          = float(settingwidget.lift_maxbending_input.liftinput.text())
-
-        # 区切り位置
-        self.y_section.clear()
+        self.y_wire = float(settingwidget.lift_maxbending_input.wireposinput.text()) / 1000
+        self.rho = 1.184
+        self.U = float(settingwidget.lift_maxbending_input.velocityinput.text())
+        self.M = float(settingwidget.lift_maxbending_input.liftinput.text())
+        #セクションの区切りの位置
         for n in range(self.n_section):
-            self.y_section.append(float(
-                settingwidget.tablewidget.item(0, n + 1).text()) / 1000)
+            self.y_section.append(float(settingwidget.tablewidget.item(0,n + 1).text()) / 1000)
 
-        # 区切り位置の調整（dy の整数倍にする）
-        i = j = 0
-        self.y_div.clear(); self.Ndiv_sec.clear()
+        i = 0
+        j = 0
         while True:
-            self.y_div.append(round(self.dy * (i + 1), 4))
-
-            if (round(self.y_div[i],4) > round(self.y_section[j]  - self.dy/2,4)
-                    and round(self.y_div[i],4) <= round(self.y_section[j] + self.dy/2,4)):
-                self.Ndiv_sec.append(i);  j += 1
-            if (round(self.y_div[i],4) > round(self.y_wire - self.dy/2,4)
-                    and round(self.y_div[i],4) <= round(self.y_wire + self.dy/2,4)):
+            self.y_div.append(round(self.dy * (i + 1),4))
+            if round(self.y_div[i],4) > round(self.y_section[j]  - self.dy / 2,4) and round(self.y_div[i],4) <= round(self.y_section[j] + self.dy / 2,4):
+                self.Ndiv_sec.append(i)
+                j = j + 1
+            if round(self.y_div[i],4) > round(self.y_wire  - self.dy / 2,4) and round(self.y_div[i],4) <= round(self.y_wire + self.dy / 2,4):
                 self.Ndiv_wire = i
 
-            if j == self.n_section: break
-            i += 1
+            if j == self.n_section:
+                break
+            i = i + 1
 
-        # パネル幅 dS と座標 (y,z,phi)
-        self.dS.clear(); self.y.clear(); self.z.clear(); self.phi.clear(); self.z_div.clear()
-        coe_tawami = self.max_tawami / (self.b/2)**2
-        for n, yd in enumerate(self.y_div):
-            self.z_div.append(coe_tawami * yd**2)
-            if n:  # n != 0
-                self.dS.append(np.sqrt((yd-self.y_div[n-1])**2 +
-                                       (self.z_div[n]-self.z_div[n-1])**2) / 2)
-                self.y.append((yd + self.y_div[n-1]) / 2)
-                self.z.append((self.z_div[n] + self.z_div[n-1]) / 2)
-                self.phi.append(np.arctan((self.z_div[n]-self.z_div[n-1]) /
-                                           (yd - self.y_div[n-1])))
+        #パネル幅dSの作成
+        coe_tawami = self.max_tawami / (self.b / 2) ** 2
+        for n in range(len(self.y_div)):
+            self.z_div.append(coe_tawami * self.y_div[n] ** 2)
+            if n != 0:
+                self.dS.append(numpy.sqrt((self.y_div[n]-self.y_div[n-1])**2+(self.z_div[n]-self.z_div[n-1])**2) / 2)
+                self.y.append((self.y_div[n]+self.y_div[n-1]) / 2)
+                self.z.append((self.z_div[n]+self.z_div[n-1]) / 2)
+                self.phi.append(numpy.arctan((self.z_div[n]-self.z_div[n-1]) / (self.y_div[n]-self.y_div[n-1])))
             else:
-                self.dS.append(np.sqrt(yd**2 + self.z_div[n]**2) / 2)
-                self.y.append(yd / 2)
+                self.dS.append(numpy.sqrt(self.y_div[n]**2+self.z_div[n]**2) / 2)
+                self.y.append(self.y_div[n] / 2)
                 self.z.append(self.z_div[n] / 2)
-                self.phi.append(np.arctan(self.z_div[n] / yd))
-
-        # EI, σ の初期化
-        self.EI.clear(); self.sigma.clear()
+                self.phi.append(numpy.arctan(self.z_div[n] / self.y_div[n]))
+        #control pointにおける桁剛性、線密度
         n = 0
-        for s in range(self.n_section):
+        for i_wings in range(self.n_section) :
             j = 1
-            coe_EI = float(settingwidget.tablewidget.item(1, s+1).text())
+            coe_EI = float(settingwidget.tablewidget.item(1,i_wings + 1).text())
             while True:
-                if s == 0:
-                    border = float(eisettingwidget.EIinputWidget[s].EIinputtable.item(0, j).text())/1000
-                    cond   = self.y[n] < border
-                else:
-                    border = (float(eisettingwidget.EIinputWidget[s].EIinputtable.item(0, j).text())/1000
-                              + self.y_section[s-1])
-                    cond = self.y[n] < border
-                idx = eisettingwidget.EIinputWidget[s].EIinputtable
-                self.EI.append(float(idx.item(1, j).text()) * coe_EI)
-                self.sigma.append(float(idx.item(2, j).text()) * coe_EI)
-                if not cond: j += 1
-                n += 1
-                if n == len(self.y) or not self.y[n] < self.y_section[s]:
+                if i_wings == 0:
+                    if round(self.y[n],4) < round(float(eisettingwidget.EIinputWidget[i_wings].EIinputtable.item(0,j).text()) / 1000 ,4):
+                        self.EI.append(float(eisettingwidget.EIinputWidget[i_wings].EIinputtable.item(1,j).text()) * coe_EI)
+                        self.sigma.append(float(eisettingwidget.EIinputWidget[i_wings].EIinputtable.item(2,j).text()) *coe_EI)
+                    else:
+                        self.EI.append(float(eisettingwidget.EIinputWidget[i_wings].EIinputtable.item(1,j).text()) *coe_EI)
+                        self.sigma.append(float(eisettingwidget.EIinputWidget[i_wings].EIinputtable.item(2,j).text()) *coe_EI)
+                        j = j + 1
+
+                elif i_wings != 0:
+                    if round(self.y[n],4) < round(float(eisettingwidget.EIinputWidget[i_wings].EIinputtable.item(0,j).text()) / 1000 + self.y_section[i_wings-1],4):
+                        self.EI.append(float(eisettingwidget.EIinputWidget[i_wings].EIinputtable.item(1,j).text())* coe_EI)
+                        self.sigma.append(float(eisettingwidget.EIinputWidget[i_wings].EIinputtable.item(2,j).text())* coe_EI)
+                    else:
+                        self.EI.append(float(eisettingwidget.EIinputWidget[i_wings].EIinputtable.item(1,j).text())* coe_EI)
+                        self.sigma.append(float(eisettingwidget.EIinputWidget[i_wings].EIinputtable.item(2,j).text())* coe_EI)
+                        j = j + 1
+                n = n + 1
+                if n == len(self.y):
+                    break
+                if not round(self.y[n],4) < round(self.y_section[i_wings],4):
                     break
 
-        # 桁重量 計算
-        # 桁重量は、各区切り位置での線密度 * dS * 2 (両側) の合計
-        self.spar_weight = np.sum(np.array(self.sigma) * np.array(self.dS) * 2)*2
-        # 重力 + wire 張力 (下向き荷重)
-        # ワイヤー位置の σ を 9.8 倍して、ワイヤー張力を加える
-        # ワイヤー位置の σ は、ワイヤー位置の dS の半分で計算
+
+
+        self.spar_weight = numpy.sum(numpy.array(self.sigma) * numpy.array(self.dS) * 2) * 2
+
         self.sigma_wire = copy.deepcopy(self.sigma)
         for i in range(len(self.y)):
             self.sigma_wire[i] *= 9.8
-        self.sigma_wire[self.Ndiv_wire] += float(
-            settingwidget.lift_maxbending_input.forcewireinput.text()
-        ) / self.dS[self.Ndiv_wire] / 2
+        self.sigma_wire[self.Ndiv_wire] += float(settingwidget.lift_maxbending_input.forcewireinput.text()) / self.dS[self.Ndiv_wire] / 2
+    def matrix(self,progressbar,qApp):
+        def calc_Q(y,z,phi,dS,progressbar):
+            Q_ij = numpy.zeros([len(y),len(y)])
+            yd_ij = numpy.zeros([len(y),len(y)])
+            zd_ij = numpy.zeros([len(y),len(y)])
+            ydd_ij = numpy.zeros([len(y),len(y)])
+            zdd_ij = numpy.zeros([len(y),len(y)])
 
-    # 誘導速度係数行列 Q_ij の計算
-    def matrix(self, progressbar, qApp):
-        def calc_Q(y, z, phi, dS):
-            """誘導速度係数行列 Q_ij を Bennet & Myers の式で評価"""
-            N = len(y)
-            Q_ij = np.zeros((N, N))
-            for i in range(N):
-                if self.run: break                       
-                for j in range(N):
-                    qApp.processEvents()               
-                    progressbar.setValue(int((i*N + j + 1)/(N*N)*100))
+            R_2_Pij = numpy.zeros([len(y),len(y)])
+            R_2_Mij = numpy.zeros([len(y),len(y)])
+            Rd_2_Pij = numpy.zeros([len(y),len(y)])
+            Rd_2_Mij = numpy.zeros([len(y),len(y)])
 
-                    # i == j の場合は 0
-                    yd  =  (y[i]-y[j])*np.cos(phi[j]) + (z[i]-z[j])*np.sin(phi[j])
-                    zd  = -(y[i]-y[j])*np.sin(phi[j]) + (z[i]-z[j])*np.cos(phi[j])
-                    ydd =  (y[i]+y[j])*np.cos(phi[j]) - (z[i]-z[j])*np.sin(phi[j])
-                    zdd =  (y[i]+y[j])*np.sin(phi[j]) + (z[i]-z[j])*np.cos(phi[j])
+            Q_ij_1 = numpy.zeros([len(y),len(y)])
+            Q_ij_2 = numpy.zeros([len(y),len(y)])
+            Q_ij_3 = numpy.zeros([len(y),len(y)])
+            Q_ij_4 = numpy.zeros([len(y),len(y)])
 
-                    R2p = (yd-dS[j])**2 + zd**2
-                    R2m = (yd+dS[j])**2 + zd**2
-                    Rd2p= (ydd+dS[j])**2 + zdd**2
-                    Rd2m= (ydd-dS[j])**2 + zdd**2
+            for i in range (len(y)):
+                #中止フラグを検知
+                if self.run == 1:
+                    break
 
-                    term1 = ((yd-dS[j])/R2p - (yd+dS[j])/R2m) * np.cos(phi[i]-phi[j])
-                    term2 = (zd/R2p - zd/R2m)               * np.sin(phi[i]-phi[j])
-                    term3 = ((ydd-dS[j])/Rd2m - (ydd+dS[j])/Rd2p) * np.cos(phi[i]+phi[j])
-                    term4 = (zdd/Rd2m - zdd/Rd2p)               * np.sin(phi[i]+phi[j])
+                for j in range(len(y)):
+                    qApp.processEvents()
+                    progressbar.setValue(int((i*len(y)+(j+1))/len(y)**2*100))
+                    yd_ij[i,j] =  (y[i] - y[j]) * numpy.cos(phi[j]) + (z[i]-z[j]) * numpy.sin(phi[j])
+                    zd_ij[i,j] = -(y[i] - y[j]) * numpy.sin(phi[j]) + (z[i]-z[j]) * numpy.cos(phi[j])
+                    ydd_ij[i,j] = (y[i] + y[j]) * numpy.cos(phi[j]) - (z[i]-z[j]) * numpy.sin(phi[j])
+                    zdd_ij[i,j] = (y[i] + y[j]) * numpy.sin(phi[j]) + (z[i]-z[j]) * numpy.cos(phi[j])
 
-                    Q_ij[i,j] = -1/(2*np.pi) * (term1 + term2 + term3 + term4)
+                    R_2_Pij[i,j] = (yd_ij[i,j] - dS[j]) ** 2 + zd_ij[i,j] ** 2
+                    R_2_Mij[i,j] = (yd_ij[i,j] + dS[j]) ** 2 + zd_ij[i,j] ** 2
+                    Rd_2_Pij[i,j] = (ydd_ij[i,j] + dS[j]) ** 2 + zdd_ij[i,j] ** 2
+                    Rd_2_Mij[i,j] = (ydd_ij[i,j] - dS[j])**2 + zdd_ij[i,j] ** 2
+
+                    Q_ij_1[i,j] = ((yd_ij[i,j] - dS[j]) / R_2_Pij[i,j] - (yd_ij[i,j] + dS[j]) / R_2_Mij[i,j]) * numpy.cos(phi[i]-phi[j])
+                    Q_ij_2[i,j] = ((zd_ij[i,j]) / R_2_Pij[i,j] - (zd_ij[i,j]) / R_2_Mij[i,j]) * numpy.sin(phi[i] - phi[j])
+                    Q_ij_3[i,j] = ((ydd_ij[i,j] - dS[j]) / Rd_2_Mij[i,j] - (ydd_ij[i,j] + dS[j]) / Rd_2_Pij[i,j]) * numpy.cos(phi[i]+phi[j]);
+                    Q_ij_4[i,j] = ((zdd_ij[i,j]) / Rd_2_Mij[i,j] - (zdd_ij[i,j]) / Rd_2_Pij[i,j]) * numpy.sin(phi[i]+phi[j])
+
+                    Q_ij[i,j] = -1 / 2 / numpy.pi * (Q_ij_1[i,j] + Q_ij_2[i,j] + Q_ij_3[i,j] + Q_ij_4[i,j])
             return Q_ij
 
-        self.Q_ij = calc_Q(self.y, self.z, self.phi, self.dS)
 
-        # 多角形化行列
-        self.polize_mat = np.zeros((len(self.y), self.n_section))
-        self.polize_mat[:self.Ndiv_sec[1]+1,0] = 1
-        for j in range(1, self.n_section):
-            idx0 = self.Ndiv_sec[j-1] + 1
-            idx1 = self.Ndiv_sec[j] + 1
-            y0, y1 = self.y_section[j-1], self.y_section[j]
-            num = np.arange(idx0, idx1)
-            self.polize_mat[num, j-1] = -(np.array(self.y)[num]-y1)/(y1-y0)
-            self.polize_mat[num, j  ] =  (np.array(self.y)[num]-y0)/(y1-y0)
+        self.Q_ij = calc_Q(self.y,self.z,self.phi,self.dS,progressbar)
+        #-----多角形化行列
+        self.polize_mat = numpy.zeros([len(self.y),self.n_section])
+        for i in range(self.Ndiv_sec[1]):
+            self.polize_mat[i,0]           = 1
+            self.polize_mat[i,self.n_section-1] = 0
 
-        #　各種行列の初期化
-        self.sh_mat = np.tril(np.ones((len(self.y), len(self.y)))) * 2
-        self.sh_mat[np.diag_indices_from(self.sh_mat)] = 1
-        self.sh_mat *= np.array(self.dS)[:,None] * self.U * self.rho
+        for j in range(1,self.n_section):
+            for i in range(self.Ndiv_sec[j-1] + 1, self.Ndiv_sec[j] + 1):
+                self.polize_mat[i,j-1]   =  -(self.y[i]-self.y_section[j])   / (self.y_section[j]-self.y_section[j-1])
+                self.polize_mat[i,j]     =   (self.y[i]-self.y_section[j-1]) / (self.y_section[j]-self.y_section[j-1])
 
-        self.mo_mat = np.tril(np.ones_like(self.sh_mat)) * 2
-        self.mo_mat[np.diag_indices_from(self.mo_mat)] = 1
-        self.mo_mat *= np.array(self.dS)[:,None]
+        #積分によりせん断力Qを求める
+        self.sh_mat = numpy.zeros([len(self.y),len(self.y)])
+        for j in range(len(self.y)-1,-1,-1):
+            for i in range(j,-1,-1):
+                if j == i:
+                    self.sh_mat[i,j] = self.dS[j]
+                else:
+                    self.sh_mat[i,j] = self.dS[j] * 2
+        self.sh_mat = self.sh_mat * self.U * self.rho
+        #積分によりモーメントを求める
+        self.mo_mat = numpy.zeros([len(self.y),len(self.y)])
+        for j in range(len(self.y)-1,-1,-1):
+            for i in range(j,-1,-1):
+                if j == i:
+                    self.mo_mat[i,j] = self.dS[j]
+                else:
+                    self.mo_mat[i,j] = self.dS[j] * 2
 
-        self.vd_mat = self.mo_mat / np.array(self.EI)[:,None] * 1e6
-        self.v_mat  = self.mo_mat.copy()
+        #積分によりたわみ角を求める行列
+        self.vd_mat = numpy.zeros([len(self.y),len(self.y)])
+        for i in range(len(self.y)-1,-1,-1):
+            for j in range(i,-1,-1):
+                if j == i:
+                    self.vd_mat[i,j] = self.dS[j] / self.EI[j]* 10 ** 6
+                else:
+                    self.vd_mat[i,j] = self.dS[j] / self.EI[j] * 10 ** 6 * 2
 
-        # 各種行列の正規化
-        # v_mat, vd_mat, mo_mat, sh_mat, polize_mat
-        B_want = np.zeros((1, len(self.y)));  B_want[0,-1] = 1
-        self.B = B_want @ self.v_mat @ self.vd_mat @ self.mo_mat @ self.sh_mat @ self.polize_mat
-        self.B_val = (self.max_tawami +
-                      (B_want @ self.v_mat @ self.vd_mat @ self.mo_mat @ self.sh_mat)
-                      @ (np.array(self.sigma_wire).T / self.rho / self.U))
+        self.v_mat = numpy.zeros([len(self.y),len(self.y)])
+        for i in range(len(self.y)-1,-1,-1):
+            for j in range(i,-1,-1):
+                if j == i:
+                    self.v_mat[i,j] = self.dS[j]
+                else:
+                    self.v_mat[i,j] = self.dS[j] * 2
 
-        self.C     = 4 * self.rho * self.U * (np.array(self.dS) @ self.polize_mat)
+        #制約となる撓みとなる位置（固定)
+        B_want = numpy.zeros([1,len(self.y)])
+        B_want[0,len(self.y)-1] = 1
+
+        #構造制約行列
+        self.B = numpy.dot(B_want,numpy.dot(self.v_mat,numpy.dot(self.vd_mat,numpy.dot(self.mo_mat,numpy.dot(self.sh_mat,self.polize_mat)))))
+        self.B_val = self.max_tawami + numpy.dot(numpy.dot(B_want,numpy.dot(self.v_mat,numpy.dot(self.vd_mat,numpy.dot(self.mo_mat,self.sh_mat)))),numpy.array(self.sigma_wire).T / self.rho / self.U)
+
+        #-----揚力制約条件行列
+        self.C = 4 * self.rho * self.U * numpy.dot(self.dS,self.polize_mat)
+        #-----揚力制約条件の値
         self.C_val = self.M * 9.8
 
-    # 最適化計算
-    def optimize(self, checkbox):
-        do_structure = checkbox.isChecked()
-        A = copy.deepcopy(self.Q_ij)
-        for j in range(A.shape[1]):
-            A[:,j] *= np.array(self.dS) * 2
-        Mat_indD = A * self.rho 
-        A = (A + A.T)
-        A = self.rho * self.polize_mat.T @ A @ self.polize_mat
 
-        # 目的関数の定義
-        if do_structure:
-            A = np.vstack((A, -self.B, -self.C))
-
-            col1 = np.append(-self.B, [0, 0])[:, None]   # (n_sec+2, 1)
-            col2 = np.append(-self.C, [0, 0])[:, None]
-
-            A = np.column_stack((A, col1, col2))
-
-            rhs = np.zeros((A.shape[0], 1))
-            rhs[-2, 0] = -float(self.B_val)     
-            rhs[-1, 0] = -float(self.C_val)
-        else:                     # 構造無視
-            A = np.vstack((A, -self.C))
-
-            col = np.append(-self.C, [0])[:, None]  
-            A  = np.column_stack((A, col))
-
-            rhs = np.zeros((A.shape[0], 1))
-            rhs[-1, 0] = -self.C_val
+    def optimize(self,checkbox):
+        def calc_ellipticallift(self):
+            root_gamma = self.M * 9.8 * 4 / numpy.pi / self.b / self.U / self.rho
+            self.gamma_el = numpy.zeros(len(self.y))
+            for i in range(len(self.y)):
+                self.gamma_el[i] = (numpy.sqrt(root_gamma ** 2 -(self.y[i] * root_gamma / self.b * 2)**2 ))
 
 
-        sol             = np.linalg.solve(A, rhs)
-        self.gamma_opt  = sol[:self.n_section]
-        self.lambda1 = float(sol[self.n_section, 0]) if do_structure else 0.0
-        self.lambda2 = float(sol[self.n_section + (1 if do_structure else 0), 0])
+        if checkbox.checkState() == 2:
+            #構造考慮
+            A = copy.deepcopy(self.Q_ij)
+            for i in range(A.shape[1]):
+                for j in range(A.shape[0]):
+                    A[j,i] = A[j,i] * self.dS[j] * 2
+            Mat_indD = A * self.rho
+            A = (A + A.T)
+            A = self.rho * numpy.dot(self.polize_mat.T,numpy.dot(A,self.polize_mat))
+            A = numpy.vstack((A,-self.B))
+            A = numpy.vstack((A,-self.C))
+            A = numpy.column_stack((A,numpy.append(-self.B,[0,0]).T))
+            A = numpy.column_stack((A,numpy.append(-self.C,[0,0]).T))
+            A_val = numpy.zeros([A.shape[0],1])
+            A_val[A.shape[0]-2,0] = -self.B_val
+            A_val[A.shape[0]-1,0] = -self.C_val
 
+            self.Optim_Answer = numpy.linalg.solve(A,A_val)
+            self.lambda1 = self.lambda2 = self.Optim_Answer[self.n_section-1,0]
+            self.lambda2 = self.Optim_Answer[self.n_section,0]
+            self.gamma_opt = self.Optim_Answer[0:self.n_section,:]
 
-        # 計算結果の格納
-        self.bending_mat   = self.v_mat @ self.vd_mat @ self.mo_mat @ self.sh_mat
-        delta = self.polize_mat @ self.gamma_opt - np.array(self.sigma_wire)[:,None]/self.U/self.rho
-        self.shearForce    = self.sh_mat @ delta
-        self.moment        = self.mo_mat @ self.shearForce
-        self.bending_angle = self.vd_mat @ self.moment
-        self.bending       = self.bending_mat @ delta
+        else:
+            #構造無視
+            A = copy.deepcopy(self.Q_ij)
+            for i in range(A.shape[1]):
+                for j in range(A.shape[0]):
+                    A[j,i] = A[j,i] * self.dS[j] * 2
+            A = (A + A.T)
+            A = self.rho * numpy.dot(self.polize_mat.T,numpy.dot(A,self.polize_mat))
+            A = numpy.vstack((A,-self.C))
+            A = numpy.column_stack((A,numpy.append(-self.C,[0]).T))
+            A_val = numpy.zeros([A.shape[0],1])
+            A_val[A.shape[0]-1,0] = -self.C_val
 
-        # 循環分布の計算
-        root_gamma = self.M*9.8 * 4 / np.pi / self.b / self.U / self.rho
-        self.gamma_el = np.sqrt(np.maximum(root_gamma**2 -
-                                           (np.array(self.y)*root_gamma/self.b*2)**2, 0))
+            self.Optim_Answer = numpy.linalg.solve(A,A_val)
+            self.lambda1 = 0
+            self.lambda2 = self.Optim_Answer[self.n_section,0]
+            self.gamma_opt = self.Optim_Answer[0:self.n_section,:]
 
-        self.gamma    = self.polize_mat @ self.gamma_opt
-        self.ind_vel  = (self.Q_ij / 2) @ self.gamma
-        self.Di       = float(np.sum(self.rho * self.ind_vel * self.gamma * self.dy * 2))
-        self.Lift = (self.C @ self.gamma_opt).item()
-        self.comp     = 0    
+        self.bending_mat = numpy.dot(self.v_mat,numpy.dot(self.vd_mat,numpy.dot(self.mo_mat,self.sh_mat)))
+        self.shearForce = numpy.dot(self.sh_mat,(numpy.dot(self.polize_mat,self.gamma_opt) - numpy.array([self.sigma_wire]).T / self.U / self.rho))
+        self.moment = numpy.dot(numpy.dot(self.mo_mat,self.sh_mat),(numpy.dot(self.polize_mat,self.gamma_opt) - numpy.array([self.sigma_wire]).T / self.U / self.rho))
+        self.bending_angle =numpy.dot(numpy.dot(self.vd_mat,numpy.dot(self.mo_mat,self.sh_mat)),(numpy.dot(self.polize_mat,self.gamma_opt) - numpy.array([self.sigma_wire]).T / self.U / self.rho))
+        self.bending = numpy.dot(self.bending_mat,(numpy.dot(self.polize_mat,self.gamma_opt) - numpy.array([self.sigma_wire]).T / self.U / self.rho))
+
+        calc_ellipticallift(self)
+        self.gamma = numpy.dot(self.polize_mat,self.gamma_opt)
+        self.ind_vel = numpy.dot(self.Q_ij / 2 ,self.gamma)
+        self.Di = 0
+        self.Lift = numpy.dot(self.C,self.gamma_opt)[0]
+        for i in range(len(self.y)):
+            self.Di += self.rho * self.ind_vel[i] * self.gamma[i] * self.dy * 2
+        self.Di = self.Di[0]
 
 
 #GUI のメイン関数

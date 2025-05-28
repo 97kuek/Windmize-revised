@@ -1,7 +1,7 @@
 #Windmize – TR-797 最適循環分布 + 構造弾性計算
 
 #必要なライブラリをインポート
-import sys, os, csv, copy
+import sys, os, csv, copy, json
 import numpy as np
 import numpy
 
@@ -135,11 +135,11 @@ class SettingWidget(QGroupBox):
             le.setText(text)
             return le
 
-        lbl.liftinput     = _le(25,  "97")
+        lbl.liftinput     = _le(25,  "103")
         lbl.velocityinput = _le(33,  "7.21")
-        lbl.bendinginput  = _le(33,  "2100")
-        lbl.wireposinput  = _le(33,  "6250")
-        lbl.forcewireinput= _le(25,  "485")
+        lbl.bendinginput  = _le(33,  "2401")
+        lbl.wireposinput  = _le(33,  "7500")
+        lbl.forcewireinput= _le(25,  "130")
         lbl.dyinput       = _le(25,  "50")
 
         h1 = QHBoxLayout(lbl)
@@ -704,6 +704,7 @@ def main():
             if not TR797_opt.run:
                 TR797_opt.optimize(exeexportbutton.do_stracutual)
                 show_results()
+                TR797_opt.comp = 0   # ← ここを追加
             TR797_opt.run = 1
             exeexportbutton.exebutton.setText("計算")
         else:                                           
@@ -749,10 +750,91 @@ def main():
         except Exception as e:
             QMessageBox.warning(mainwindow, "Error", f"CSV出力に失敗しました\n{e}")
 
+    def save_settings():
+        """現在の設定をJSONファイルに保存"""
+        fname, _ = QFileDialog.getSaveFileName(mainwindow, "設定を保存", "", "JSON (*.json)")
+        if not fname:
+            return
+        try:
+            data = {
+                "lift": settingwidget.lift_maxbending_input.liftinput.text(),
+                "velocity": settingwidget.lift_maxbending_input.velocityinput.text(),
+                "bending": settingwidget.lift_maxbending_input.bendinginput.text(),
+                "wirepos": settingwidget.lift_maxbending_input.wireposinput.text(),
+                "forcewire": settingwidget.lift_maxbending_input.forcewireinput.text(),
+                "dy": settingwidget.lift_maxbending_input.dyinput.text(),
+                "span_list": [settingwidget.tablewidget.item(0, i+1).text() for i in range(settingwidget.tablewidget.columnCount()-1)],
+                "coef_list": [settingwidget.tablewidget.item(1, i+1).text() for i in range(settingwidget.tablewidget.columnCount()-1)],
+                "EI_sigma": [
+                    [
+                        [gb.EIinputtable.item(r, c).text() if gb.EIinputtable.item(r, c) else ""
+                        for c in range(gb.EIinputtable.columnCount())]
+                        for r in range(gb.EIinputtable.rowCount())
+                    ]
+                    for gb in eisettingwidget.EIinputWidget
+                ]
+            }
+            with open(fname, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            QMessageBox.warning(mainwindow, "Error", f"設定保存に失敗しました\n{e}")
+
+    def load_settings():
+        """JSONファイルから設定を読み込む"""
+        fname, _ = QFileDialog.getOpenFileName(mainwindow, "設定を読み込む", "", "JSON (*.json)")
+        if not fname:
+            return
+        try:
+            with open(fname, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # 上段入力
+            settingwidget.lift_maxbending_input.liftinput.setText(data["lift"])
+            settingwidget.lift_maxbending_input.velocityinput.setText(data["velocity"])
+            settingwidget.lift_maxbending_input.bendinginput.setText(data["bending"])
+            settingwidget.lift_maxbending_input.wireposinput.setText(data["wirepos"])
+            settingwidget.lift_maxbending_input.forcewireinput.setText(data["forcewire"])
+            settingwidget.lift_maxbending_input.dyinput.setText(data["dy"])
+            # スパン分割
+            col = len(data["span_list"])
+            settingwidget.tablewidget.setColumnCount(col+1)
+            for i, val in enumerate(data["span_list"]):
+                settingwidget.tablewidget.setItem(0, i+1, QTableWidgetItem(val))
+            for i, val in enumerate(data["coef_list"]):
+                settingwidget.tablewidget.setItem(1, i+1, QTableWidgetItem(val))
+            settingwidget.tablewidget.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            # EI/線密度
+            eisettingwidget.EIinputWidget.clear()
+            eisettingwidget.tabwidget.clear()
+            for i, tabdata in enumerate(data["EI_sigma"]):
+                gb = QGroupBox(f"第{i+1}翼の剛性と線密度を入力してください")
+                table = QTableWidget(len(tabdata), len(tabdata[0]), gb)
+                table.setFixedSize(570, 100)
+                table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                table.verticalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                for r, row in enumerate(tabdata):
+                    for c, val in enumerate(row):
+                        item = QTableWidgetItem(val)
+                        if c == 0:
+                            item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                        table.setItem(r, c, item)
+                gb.EIinputtable = table
+                gl = QVBoxLayout(gb)
+                gl.addWidget(table)
+                eisettingwidget.tabwidget.addTab(gb, f"第{i+1}翼")
+                eisettingwidget.EIinputWidget.append(gb)
+        except Exception as e:
+            QMessageBox.warning(mainwindow, "Error", f"設定読込に失敗しました\n{e}")
+
     # メインウィンドウのメニューバー
     menubar   = mainwindow.menuBar()
     filemenu  = menubar.addMenu("File")
     filemenu.addAction("ファイルI/O未実装")
+
+    filemenu.addSeparator()
+    act_save = filemenu.addAction("設定保存")
+    act_load = filemenu.addAction("設定読込")
+    act_save.triggered.connect(save_settings)
+    act_load.triggered.connect(load_settings)
 
     aboutmenu = menubar.addMenu("About")
     act_about = aboutmenu.addAction("About Windmize")
